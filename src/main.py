@@ -5,7 +5,6 @@ import threading
 from time import perf_counter
 from chip8 import Chip8, Chip8Display
 
-
 if len(sys.argv) < 2:
     sys.exit("Usage: py main.py <rom_path> <instruction_speed=700>")
 elif len(sys.argv) == 3 and not sys.argv[2].isdecimal():
@@ -14,7 +13,7 @@ elif len(sys.argv) == 3 and not sys.argv[2].isdecimal():
 romPath = sys.argv[1]
 instructionSpeed = int(sys.argv[2]) if len(sys.argv) >= 3 else 700
 
-# Constants
+# Constant
 FONT_DATA = np.array([
     [0xF0, 0x90, 0x90, 0x90, 0xF0], # 0
     [0x20, 0x60, 0x20, 0x20, 0x70], # 1
