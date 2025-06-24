@@ -1,5 +1,6 @@
 import numpy as np
 import pygame 
+import random
 from time import perf_counter
 
 START_ADDRESS = 0x200
@@ -16,8 +17,26 @@ class Chip8Display(pygame.Surface):
     def getPixelArray(self):
         return pygame.PixelArray(self)
 
+class Chip8Keypad:
+    CHAR_TR = { '1':0x1, '2':0x2, '3':0x3, '4':0xC,
+                'q':0x4, 'w':0x5, 'e':0x6, 'r':0xD,
+                'a':0x7, 's':0x8, 'd':0x9, 'f':0xE,
+                'z':0xA, 'x':0x0, 'c':0xB, 'v':0xF}
+    def __init__(self):
+        self.keydownBools = np.zeros((16,), dtype='bool')
+        self.numKeypresses = 0
+
+    def registerKeydown(self, c:str):
+        if c in self.CHAR_TR:
+            self.numKeypresses += 1
+            self.keydownBools[self.CHAR_TR[c]] = True
+
+    def registerKeyup(self, c:str):
+        if c in self.CHAR_TR:
+            self.keydownBools[self.CHAR_TR[c]] = False
+
 class Chip8:
-    def __init__(self, inspeed, display:Chip8Display):
+    def __init__(self, inspeed, display:Chip8Display, keypad:Chip8Keypad):
         self.registers = np.zeros((16,), dtype='uint8')
         self.memory = np.empty((4096,), dtype='uint8')
         self.indexRegister = np.zeros((1,), dtype='uint16' )
@@ -25,8 +44,11 @@ class Chip8:
         self.pcStack = np.zeros((16,), dtype='uint16')
         self.stackPointer = np.zeros((1,), dtype='uint8')
         self.display = display
+        self.keypad = keypad
         self.timing = 1 / inspeed # min time between instructions, measured in seconds
         self.prevCycle = perf_counter()
+        self.dt = 0 # delay timer
+        self.st = 0 # sound timer
 
     def loadROM(self, filename:str):
         """Load a ROM file into memory"""
@@ -38,14 +60,6 @@ class Chip8:
     def loadFonts(self, fontData:np.ndarray):
         start = 0x50 #the starting address for fonts in memory
         self.memory[start:start+ fontData.shape[0] * fontData.shape[1]] = fontData.flatten()
-
-    def getCurrentInstruction(self):
-        """Get the current instruction pointed to by the program counter from memory """
-        firstByte = np.uint16(self.memory[self.pc[0]])
-        secondByte = np.uint16(self.memory[self.pc[0] + 1])
-        print(hex(firstByte))
-        print(hex(secondByte))
-        print(hex(firstByte << 8 | secondByte))
 
     def fetchCurrentInstruction(self):
         """Fetch the instruction at memory location pointed to by the PC and increment the PC by 2"""
@@ -131,37 +145,45 @@ class Chip8:
                         # 8xy3 instruction: Perform bitwise XOR on the contents of registers x and y, then store in register x
                         self.registers[x] = self.registers[x] ^ self.registers[y]
                     case 0x4:
-                        # 8xy4 instruction: Adds the contents of register y to register x, sets VF to 1 if there is a carry, 0 otherwise
+                        # 8xy4 instruction: Adds the contents of register y to register x, sets  VF to 1 if there is a carry, 0 otherwise
                         sumxy = np.uint16(self.registers[x]) + self.registers[y]
+                        self.registers[x] = np.uint8(sumxy & 0x00FF)
                         if sumxy > 255:
                             self.registers[0xF] = 1
                         else:
                             self.registers[0xF] = 0
 
-                        self.registers[x] = np.uint8(sumxy & 0x00FF)
                     case 0x5:
                         # 8xy5 instruction
-                        if self.registers[x] > self.registers[y]:
-                            self.registers[0xF] = 1
-                        else:
+                        cmpx, cmpy = int(self.registers[x]), int(self.registers[y])
+                        diffxy = self.registers[x] - self.registers[y]
+                        self.registers[x] = diffxy
+                        if cmpx < cmpy:
                             self.registers[0xF] = 0
+                        else:
+                            self.registers[0xF] = 1
 
-                        self.registers[x] = self.registers[x] - self.registers[y]
+
                     case 0x6:
-                        # 8xy6 instruction: Store lsb in register F, then shift register x right by 1
-                        self.registers[0xF] = self.registers[x] & 0x01 #000 0001
+                        # 8xy6 instruction: Store lsb of x in register F, then shift register x right by 1
+                        lsb = self.registers[x] & 1
                         self.registers[x] = np.uint8(self.registers[x] >> 1) 
+                        self.registers[0xF] = lsb
                         
                     case 0x7:
                         # 8xy7 instruction: Register x = Register y - Register x
-                        if self.registers[y] > self.registers[x]:
-                            self.registers[0xF] = 1
-                        else:
-                            self.registers[0xF] = 0
+                        cmpx, cmpy = int(self.registers[x]), int(self.registers[y])
                         self.registers[x] = self.registers[y] - self.registers[x]
+                        if cmpy < cmpx:
+                            self.registers[0xF] = 0
+                        else:
+                            self.registers[0xF] = 1
+                        
                     case 0xE:
-                        self.registers[0xF] = self.registers[x] & 0x80 #1000 0000
+                        # 8xyE instruction: store msb of x in register F, then shift register x left by 1
+                        msb = self.registers[x] & 128 #1000 0000
                         self.registers[x] = np.uint8(self.registers[x] << 1)
+                        self.registers[0xF] = msb >> 7
                         
             case 0x9000:
                 # 9xy0 instruction: Increments pc by 2 if the contents of registers x and y are not equal
@@ -174,14 +196,22 @@ class Chip8:
                 # Annn instruction: Sets the index register to the memory address nnn
                 nnn = instruction & 0x0FFF
                 self.indexRegister[0] = np.uint16(nnn)
+
             case 0xB000:
-                pass
+                # Bnnn instruction: Jumps to address nnn plus register 0
+                nnn = instruction & 0x0FFF
+                self.pc = np.uint16(nnn) + self.registers[0]
+
             case 0xC000:
-                pass
+                # Cxnn
+                x = instruction & 0x0F00
+                nn = instruction & 0x00FF
+                self.registers[x] = np.uint8(random.randint(0,255)) & np.uint8(nn) 
+
             case 0xD000:
                 # Dxyn instruction: Display n byte sprite from memory pointed to by the index register at coordinates (Vx, Vy) on the display 
                 # VF is set to 1 if any pixels are flipped from set to unset (1 to 0) and 0 otherwise
-                print("Drawing sprite")
+                #print("Drawing sprite")
                 x = (instruction & 0x0F00) >> 8
                 y = (instruction & 0x00F0) >> 4
                 n = instruction & 0x000F
@@ -212,12 +242,27 @@ class Chip8:
                 self.display.unlock()    
             
             case 0xE000:
-                pass
+                x = (instruction & 0x0F00) >> 8
+                
+                match instruction & 0x00FF:
+                    case 0x009E:
+                        self.pc += 2 if self.keypad.keydownBools[self.registers[x]] == True else 0
+                    case 0x00A1:
+                        self.pc += 2 if self.keypad.keydownBools[self.registers[x]] == False else 0
 
             case 0xF000:
                 x = (instruction & 0x0F00) >> 8
 
                 match instruction & 0x00FF:
+                    case 0x07:
+                        #Fx07 instruction: Sets register x to the value of dt
+                        self.registers[x] = self.dt
+                    case 0x0A:
+                        #Fx0A instruction: halt execution cycle until keypress
+                        pass
+                    case 0x1E:
+                        #Fx1E instruction: Adds register X to I
+                        self.indexRegister += np.uint16(self.registers[x])
                     case 0x33:
                         # Fx33 instruction
                         self.memory[self.indexRegister[0]] = self.registers[x] // 100
