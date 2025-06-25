@@ -3,7 +3,7 @@ import pygame
 import sys
 import threading
 from time import perf_counter
-from chip8 import Chip8, Chip8Display
+from chip8 import Chip8, Chip8Display, Chip8Keypad, Chip8Timer
 
 if len(sys.argv) < 2:
     sys.exit("Usage: py main.py <rom_path> <instruction_speed=700>")
@@ -34,7 +34,9 @@ FONT_DATA = np.array([
 ], dtype='uint8')
 
 chip8Display = Chip8Display()
-chip8 = Chip8(instructionSpeed, chip8Display)
+chip8Keypad = Chip8Keypad()
+chip8Timer = Chip8Timer()
+chip8 = Chip8(instructionSpeed, chip8Display, chip8Keypad, chip8Timer)
 
 chip8.loadROM(romPath)
 chip8.loadFonts(FONT_DATA)
@@ -46,7 +48,7 @@ def FetchExecuteLoop():
     while running:
         current = perf_counter()
 
-        if current - chip8.prevCycle < chip8.timing:
+        if (current - chip8.prevCycle) < chip8.timing:
             continue
 
         op = chip8.fetchCurrentInstruction()
@@ -66,11 +68,17 @@ def DisplayLoop():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.KEYDOWN:
+                chip8Keypad.registerKeydown(event.dict['unicode'])
+            elif event.type == pygame.KEYUP:
+                chip8Keypad.registerKeyup(event.dict['unicode'])
 
         pygame.transform.scale(chip8Display, scaledChip8Display.get_size(), scaledChip8Display)
         xMid = (pygame.display.get_surface().get_width() // 2) - scaledChip8Display.get_width() // 2
         screen.blit(scaledChip8Display, (xMid,0))
         pygame.display.flip()
+
+        chip8Timer.decrement()
         clock.tick(60)
 
     pygame.quit()
