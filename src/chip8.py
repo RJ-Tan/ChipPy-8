@@ -1,9 +1,11 @@
 import numpy as np
 import pygame 
 import random
+import time
 from time import perf_counter
 
 START_ADDRESS = 0x200
+START_ADDRESS_FONTS = 0x50
 
 class Chip8Display(pygame.Surface):
     def __init__(self):
@@ -25,18 +27,28 @@ class Chip8Keypad:
     def __init__(self):
         self.keydownBools = np.zeros((16,), dtype='bool')
         self.numKeypresses = 0
+        self.currentKeypress = None
 
     def registerKeydown(self, c:str):
         if c in self.CHAR_TR:
-            self.numKeypresses += 1
             self.keydownBools[self.CHAR_TR[c]] = True
 
     def registerKeyup(self, c:str):
         if c in self.CHAR_TR:
             self.keydownBools[self.CHAR_TR[c]] = False
+            self.currentKeypress = self.CHAR_TR[c]
+
+class Chip8Timer:
+    def __init__(self):
+        self.delay = 0
+        self.sound = 0
+    
+    def decrement(self):
+        self.delay -= 1 if self.delay > 0 else 0
+        self.sound -= 1 if self.sound > 0 else 0
 
 class Chip8:
-    def __init__(self, inspeed, display:Chip8Display, keypad:Chip8Keypad):
+    def __init__(self, inspeed, display:Chip8Display, keypad:Chip8Keypad, timer:Chip8Timer):
         self.registers = np.zeros((16,), dtype='uint8')
         self.memory = np.empty((4096,), dtype='uint8')
         self.indexRegister = np.zeros((1,), dtype='uint16' )
@@ -45,10 +57,10 @@ class Chip8:
         self.stackPointer = np.zeros((1,), dtype='uint8')
         self.display = display
         self.keypad = keypad
+        self.timer = timer
         self.timing = 1 / inspeed # min time between instructions, measured in seconds
         self.prevCycle = perf_counter()
-        self.dt = 0 # delay timer
-        self.st = 0 # sound timer
+        self.awaitingKeyInput = False
 
     def loadROM(self, filename:str):
         """Load a ROM file into memory"""
@@ -204,7 +216,7 @@ class Chip8:
 
             case 0xC000:
                 # Cxnn
-                x = instruction & 0x0F00
+                x = (instruction & 0x0F00) >> 8
                 nn = instruction & 0x00FF
                 self.registers[x] = np.uint8(random.randint(0,255)) & np.uint8(nn) 
 
@@ -232,9 +244,9 @@ class Chip8:
                         if spriteBit == 0:
                             continue
 
-                        if pixelArray[(vxCoord + j) % 64, (vyCoord + i) % 32] == ON_BIT:
+                        if pixelArray[int((vxCoord + j) % 64), int((vyCoord + i) % 32)] == ON_BIT:
                             self.registers[0xF] = 1
-                            pixelArray[(vxCoord + j) % 64, (vyCoord + i) % 32 ] = OFF_BIT
+                            pixelArray[int((vxCoord + j) % 64), int((vyCoord + i) % 32) ] = OFF_BIT
                         else:
                             newx, newy = (vxCoord + j) % 64, (vyCoord + i) % 32
                             
@@ -246,9 +258,11 @@ class Chip8:
                 
                 match instruction & 0x00FF:
                     case 0x009E:
-                        self.pc += 2 if self.keypad.keydownBools[self.registers[x]] == True else 0
+                        if self.keypad.keydownBools[self.registers[x]] == True:
+                            self.pc[0] += 2 
                     case 0x00A1:
-                        self.pc += 2 if self.keypad.keydownBools[self.registers[x]] == False else 0
+                        if self.keypad.keydownBools[self.registers[x]] == False:
+                            self.pc[0] += 2 
 
             case 0xF000:
                 x = (instruction & 0x0F00) >> 8
@@ -256,13 +270,32 @@ class Chip8:
                 match instruction & 0x00FF:
                     case 0x07:
                         #Fx07 instruction: Sets register x to the value of dt
-                        self.registers[x] = self.dt
+                        self.registers[x] = self.timer.delay
                     case 0x0A:
                         #Fx0A instruction: halt execution cycle until keypress
-                        pass
+                        if self.awaitingKeyInput == False:
+                            self.awaitingKeyInput = True
+                            self.keypad.currentKeypress = None
+                        
+                        if self.awaitingKeyInput == True and self.keypad.currentKeypress == None:
+                            print("Looping till keypress")
+                            self.pc[0] -= 2
+                        elif self.awaitingKeyInput == True and self.keypad.currentKeypress != None:
+                            self.awaitingKeyInput = False
+                            self.registers[x] = np.uint8(self.keypad.currentKeypress)
+                    case 0x15:
+                        #Fx15 instruction: Set delay timer to value of register x
+                        self.timer.delay = int(self.registers[x])
+                    case 0x18:
+                        #Fx18 instruction: Set sound timer to value of register x
+                        self.timer.sound = int(self.registers[x])
                     case 0x1E:
                         #Fx1E instruction: Adds register X to I
-                        self.indexRegister += np.uint16(self.registers[x])
+                        self.indexRegister[0] += np.uint16(self.registers[x])
+                    case 0x29:
+                        #Fx29 instruction: Sets index register to location of sprite for character in register x
+                        self.indexRegister[0] = START_ADDRESS_FONTS + np.uint16(self.registers[x]) * 5
+                
                     case 0x33:
                         # Fx33 instruction
                         self.memory[self.indexRegister[0]] = self.registers[x] // 100
