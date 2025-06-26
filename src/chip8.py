@@ -74,7 +74,7 @@ class Chip8:
         self.memory[start:start+ fontData.shape[0] * fontData.shape[1]] = fontData.flatten()
 
     def fetchCurrentInstruction(self):
-        """Fetch the instruction at memory location pointed to by the PC and increment the PC by 2"""
+        # Fetch the instruction at memory location pointed to by the PC and increment the PC by 2
         opcode = np.uint16(self.memory[self.pc[0]]) << 8 | np.uint16(self.memory[self.pc[0] + 1])
         self.pc[0] += 2
         return opcode
@@ -83,7 +83,8 @@ class Chip8:
 
         match instruction & 0xF000:
             case 0x0000:
-                if instruction == 0x00E0: # Clear the display
+                if instruction == 0x00E0:
+                    # 00E0 instruction: Clear display
                     self.display.clear()
                     print("Clear display")
                 elif instruction == 0x00EE:
@@ -164,7 +165,6 @@ class Chip8:
                             self.registers[0xF] = 1
                         else:
                             self.registers[0xF] = 0
-
                     case 0x5:
                         # 8xy5 instruction
                         cmpx, cmpy = int(self.registers[x]), int(self.registers[y])
@@ -174,14 +174,11 @@ class Chip8:
                             self.registers[0xF] = 0
                         else:
                             self.registers[0xF] = 1
-
-
                     case 0x6:
                         # 8xy6 instruction: Store lsb of x in register F, then shift register x right by 1
                         lsb = self.registers[x] & 1
                         self.registers[x] = np.uint8(self.registers[x] >> 1) 
                         self.registers[0xF] = lsb
-                        
                     case 0x7:
                         # 8xy7 instruction: Register x = Register y - Register x
                         cmpx, cmpy = int(self.registers[x]), int(self.registers[y])
@@ -190,7 +187,6 @@ class Chip8:
                             self.registers[0xF] = 0
                         else:
                             self.registers[0xF] = 1
-                        
                     case 0xE:
                         # 8xyE instruction: store msb of x in register F, then shift register x left by 1
                         msb = self.registers[x] & 128 #1000 0000
@@ -215,7 +211,7 @@ class Chip8:
                 self.pc = np.uint16(nnn) + self.registers[0]
 
             case 0xC000:
-                # Cxnn
+                # Cxnn instruction
                 x = (instruction & 0x0F00) >> 8
                 nn = instruction & 0x00FF
                 self.registers[x] = np.uint8(random.randint(0,255)) & np.uint8(nn) 
@@ -223,19 +219,18 @@ class Chip8:
             case 0xD000:
                 # Dxyn instruction: Display n byte sprite from memory pointed to by the index register at coordinates (Vx, Vy) on the display 
                 # VF is set to 1 if any pixels are flipped from set to unset (1 to 0) and 0 otherwise
-                #print("Drawing sprite")
                 x = (instruction & 0x0F00) >> 8
                 y = (instruction & 0x00F0) >> 4
                 n = instruction & 0x000F
                 vxCoord = self.registers[x] % 64
                 vyCoord = self.registers[y] % 32
 
-                ON_BIT = self.display.map_rgb((255, 255, 255)) # Color for pixel on
+                ON_BIT = self.display.map_rgb((255, 255, 255))
                 OFF_BIT = self.display.map_rgb((0, 0, 0)) 
 
                 pixelArray = self.display.getPixelArray()
                 self.display.lock()
-                self.registers[0xF] = 0 # Default value for VF register (pixel collision flag)
+                self.registers[0xF] = 0
                 for i in range(n):
                     spriteByte = np.unpackbits(self.memory[self.indexRegister[0] + i])
                   
@@ -258,9 +253,11 @@ class Chip8:
                 
                 match instruction & 0x00FF:
                     case 0x009E:
+                        # Ex9E instruction
                         if self.keypad.keydownBools[self.registers[x]] == True:
                             self.pc[0] += 2 
                     case 0x00A1:
+                        # ExA1 instruction
                         if self.keypad.keydownBools[self.registers[x]] == False:
                             self.pc[0] += 2 
 
@@ -278,7 +275,6 @@ class Chip8:
                             self.keypad.currentKeypress = None
                         
                         if self.awaitingKeyInput == True and self.keypad.currentKeypress == None:
-                            print("Looping till keypress")
                             self.pc[0] -= 2
                         elif self.awaitingKeyInput == True and self.keypad.currentKeypress != None:
                             self.awaitingKeyInput = False
@@ -295,7 +291,6 @@ class Chip8:
                     case 0x29:
                         #Fx29 instruction: Sets index register to location of sprite for character in register x
                         self.indexRegister[0] = START_ADDRESS_FONTS + np.uint16(self.registers[x]) * 5
-                
                     case 0x33:
                         # Fx33 instruction
                         self.memory[self.indexRegister[0]] = self.registers[x] // 100
