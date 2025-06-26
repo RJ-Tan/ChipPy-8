@@ -75,7 +75,8 @@ def DisplayLoop():
 
         pygame.transform.scale(chip8Display, scaledChip8Display.get_size(), scaledChip8Display)
         xMid = (pygame.display.get_surface().get_width() // 2) - scaledChip8Display.get_width() // 2
-        screen.blit(scaledChip8Display, (xMid,0))
+        yMid = (pygame.display.get_surface().get_height()//2) - scaledChip8Display.get_height()//2
+        screen.blit(scaledChip8Display, (xMid,yMid))
         pygame.display.flip()
 
         chip8Timer.decrement()
